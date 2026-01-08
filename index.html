@@ -326,6 +326,20 @@
       font-weight:900;
       font-size:12px;
     }
+
+
+/* JSON tools (somente para edição) */
+.obs-actions{
+  margin-top:6px;
+  display:flex;
+  gap:8px;
+  width:100%;
+  max-width:100%;
+}
+.obs-actions button{flex:1 1 0; min-width:0; box-sizing:border-box; font-size:10px; padding:6px 8px; border-radius:10px; line-height:1.1; text-align:center; display:flex; align-items:center; justify-content:center; white-space:normal; height:auto;}
+.obs-actions button br{content:"";}
+.obs-actions input[type="file"]{display:none;}
+
 </style>
 </head>
 <body>
@@ -399,6 +413,12 @@
         <div class="hint">
           Atividades com observação possuem o marcador (triângulo) no canto superior direito.
         </div>
+        <div class="hint" style="margin-top:10px; display:flex; gap:8px; align-items:center; justify-content:flex-start; font-size:12px">
+          <button id="exportJsonBtn" style="font-size:12px; padding:6px 10px">Baixar atualizações<br>(JSON)</button>
+          <button id="importJsonBtn" style="font-size:12px; padding:6px 10px">Importar atualizações<br>(JSON)</button>
+          <input id="importJsonFile" type="file" accept="application/json" style="display:none" />
+        </div>
+
       </div>
     </aside>
 
@@ -420,7 +440,7 @@
         <div class="panel">
           <h3>Distribuição por status</h3>
           <div class="chartWrap">
-            <svg id="donut" width="220" height="220" viewBox="0 0 220 220" aria-label="Gráfico de rosca"></svg>
+            <svg id="donut" width="220" height="220" viewBox="-12 -12 244 244" aria-label="Gráfico de rosca"></svg>
             <div class="legend" id="legend"></div>
           </div>
         </div>
@@ -827,29 +847,34 @@ function renderKPIs(tasks){
 }
 
 function renderDonut(tasks){
-  // Pizza espelha exatamente os valores dos KPIs superiores.
+  // Donut principal (progresso) + arcos finos EXTERNOS (Crítico / Em risco), alinhados e menores.
   const c = computeTopCounts(tasks);
-
-  const counts = {
-    critical: c.critical,
-    risk: c.risk,
-    progress: c.progress,         // Em execução (iniciadas)
-    not_started: c.not_started,    // Aguardando início
-    done: c.done
-  };
-
-  const order = ["critical","risk","progress","not_started","done"];
-  const labelMap = {critical:"Crítico", risk:"Em risco", progress:"Em execução", not_started:"Aguardando início", done:"Finalizado"};
-  const colorMap = {critical:"var(--critical)", risk:"var(--risk)", progress:"var(--progress)", not_started:"var(--gray)", done:"var(--done)"};
-
   const total = c.total || 1;
 
-  const svg = document.getElementById("donut");
-  const cx=110, cy=110, r=78, stroke=22;
-  const C = 2*Math.PI*r;
-  let acc = 0;
+  const base = {
+    not_started: c.not_started || 0,
+    progress: c.progress || 0,
+    done: c.done || 0
+  };
 
-  const centerPct = Math.round(((counts.done||0)/total)*100);
+  // Risco por prazo (independente do progresso)
+  let risk = {critical:0, risk:0};
+  tasks.forEach(t=>{
+    const k = classify(t).key;
+    if(k === "critical") risk.critical++;
+    else if(k === "risk") risk.risk++;
+  });
+
+  const svg = document.getElementById("donut");
+  const cx=110, cy=110;
+  const r=74, stroke=22;          // base (ligeiramente menor para dar margem)
+  const stroke2=6;
+  // arco externo: fora do anel grosso (considera metade das espessuras)
+  const r2 = r + (stroke/2) + (stroke2/2) + 2;
+  const C = 2*Math.PI*r;
+  const C2 = 2*Math.PI*r2;
+
+  const centerPct = Math.round(((base.done||0)/total)*100);
 
   svg.innerHTML = `
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(11,18,32,.10)" stroke-width="${stroke}" />
@@ -857,36 +882,62 @@ function renderDonut(tasks){
     <text x="${cx}" y="${cy+16}" text-anchor="middle" font-size="11" fill="rgba(11,18,32,.60)">Finalizado</text>
   `;
 
-  order.forEach(key => {
-    const v = counts[key] || 0;
+  // Base ring (progresso)
+  const baseOrder = ["progress","not_started","done"];
+  const baseColor = {progress:"var(--progress)", not_started:"var(--gray)", done:"var(--done)"};
+  let acc = 0;
+  baseOrder.forEach(key=>{
+    const v = base[key] || 0;
     if(!v) return;
     const dash = (v/total)*C;
     const gap = C - dash;
-    const off = -acc;
-    acc += dash;
-    const col = colorMap[key];
     svg.insertAdjacentHTML("beforeend", `
       <circle cx="${cx}" cy="${cy}" r="${r}" fill="none"
-        stroke="${col}" stroke-width="${stroke}"
+        stroke="${baseColor[key]}" stroke-width="${stroke}"
         stroke-dasharray="${dash} ${gap}"
-        stroke-dashoffset="${off}"
+        stroke-dashoffset="${-acc}"
         transform="rotate(-90 ${cx} ${cy})"
-        stroke-linecap="butt"
-        opacity="0.98" />
+        stroke-linecap="butt" />
     `);
+    acc += dash;
   });
 
+  // External thin arcs (Crítico / Em risco)
+  let acc2 = 0;
+  const riskOrder = ["critical","risk"];
+  const riskColor = {critical:"var(--critical)", risk:"var(--risk)"};
+  riskOrder.forEach(key=>{
+    const v = risk[key] || 0;
+    if(!v) return;
+    const dash = (v/total)*C2;
+    const gap = C2 - dash;
+    svg.insertAdjacentHTML("beforeend", `
+      <circle cx="${cx}" cy="${cy}" r="${r2}" fill="none"
+        stroke="${riskColor[key]}" stroke-width="${stroke2}"
+        stroke-dasharray="${dash} ${gap}"
+        stroke-dashoffset="${-acc2}"
+        transform="rotate(-90 ${cx} ${cy})"
+        stroke-linecap="butt" />
+    `);
+    acc2 += dash;
+  });
+
+  // Legenda (sem %): números alinhados
   const legend = document.getElementById("legend");
-  legend.innerHTML = order.map(k => {
-    const v = counts[k] || 0;
-    return `
-      <div class="legItem" style="gap:10px;">
-        <span class="swatch" style="background:${colorMap[k]}"></span>
-        <span style="flex:1">${escapeHtml(labelMap[k])}</span>
-        <span class="mono" style="min-width:34px; text-align:right;">${v}</span>
-      </div>
-    `;
-  }).join("");
+  const items = [
+    ["Crítico", risk.critical, "var(--critical)"],
+    ["Em risco", risk.risk, "var(--risk)"],
+    ["Em execução", base.progress, "var(--progress)"],
+    ["Aguardando início", base.not_started, "var(--gray)"],
+    ["Finalizado", base.done, "var(--done)"]
+  ];
+  legend.innerHTML = items.map(([lbl,val,col]) => `
+    <div class="legItem" style="display:flex; align-items:center; gap:10px;">
+      <span class="swatch" style="background:${col}"></span>
+      <span style="flex:1">${escapeHtml(lbl)}</span>
+      <span class="mono" style="min-width:28px; text-align:right;">${val}</span>
+    </div>
+  `).join("");
 }
 
 function renderBars(tasks){
@@ -1075,6 +1126,34 @@ function refresh(){
   renderInsights(tasks);
 }
 
+
+async function loadUpdatesJson(){
+  // Carrega atualizações compartilhadas (GitHub Pages) se existir updates.json na mesma pasta.
+  // Não quebra se não existir (continua usando localStorage).
+  try{
+    const res = await fetch("updates.json?ts=" + Date.now(), {cache:"no-store"});
+    if(!res.ok) return;
+    const obj = await res.json();
+    if(obj && typeof obj === "object"){
+      localStorage.setItem(LS_KEY, JSON.stringify(obj));
+    }
+  }catch(e){
+    // silencioso (opcional)
+  }
+}
+
+function downloadTextFile(filename, text, mime="application/json"){
+  const blob = new Blob([text], {type:mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
 function bind(){
   initFilters();
   document.getElementById("leaderSel").value="*";
@@ -1092,6 +1171,37 @@ function bind(){
     document.getElementById("toDate").value="";
     refresh();
   });
+  // Exportar / Importar atualizações (para publicar no GitHub Pages)
+  const exportBtn = document.getElementById("exportJsonBtn");
+  const importBtn = document.getElementById("importJsonBtn");
+  const importFile = document.getElementById("importJsonFile");
+
+  if(exportBtn){
+    exportBtn.addEventListener("click", () => {
+      const raw = localStorage.getItem(LS_KEY) || "{}";
+      downloadTextFile("updates.json", raw, "application/json");
+    });
+  }
+  if(importBtn && importFile){
+    importBtn.addEventListener("click", () => importFile.click());
+    importFile.addEventListener("change", async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if(!f) return;
+      try{
+        const text = await f.text();
+        const obj = JSON.parse(text);
+        if(obj && typeof obj === "object"){
+          localStorage.setItem(LS_KEY, JSON.stringify(obj));
+          refresh();
+        }
+      }catch(err){
+        alert("Arquivo JSON inválido.");
+      }finally{
+        importFile.value = "";
+      }
+    });
+  }
+
 
   document.getElementById("closeModal").addEventListener("click", closeModal);
   document.getElementById("discardBtn").addEventListener("click", closeModal);
@@ -1103,11 +1213,7 @@ function bind(){
   });
 }
 
-bind();
-refresh();
+(async()=>{ await loadUpdatesJson(); bind(); refresh(); })();
 </script>
-<div style="position:fixed;bottom:10px;right:10px;color:red;font-weight:700;z-index:99999">
-  TESTE 123
-</div>
 </body>
 </html>
